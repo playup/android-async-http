@@ -18,18 +18,19 @@
 
 package com.loopj.android.http;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.StatusLine;
 import org.apache.http.client.HttpResponseException;
 import org.apache.http.entity.BufferedHttpEntity;
-import org.apache.http.util.EntityUtils;
 
 import android.os.Handler;
-import android.os.Message;
 import android.os.Looper;
+import android.os.Message;
 
 /**
  * Used to intercept and handle the responses from requests made using 
@@ -110,6 +111,12 @@ public class AsyncHttpResponseHandler {
     public void onSuccess(String content) {}
 
     /**
+     * Fired when a request returns successfully, override to handle in your own code
+     * @param content the body of the HTTP response from the server
+     */
+    public void onSuccess(byte[] content) {}
+
+    /**
      * Fired when a request fails to complete, override to handle in your own code
      * @param error the underlying cause of the failure
      */
@@ -120,7 +127,7 @@ public class AsyncHttpResponseHandler {
     // Pre-processing of messages (executes in background threadpool thread)
     //
 
-    protected void sendSuccessMessage(String responseBody) {
+    protected void sendSuccessMessage(byte[] responseBody) {
         sendMessage(obtainMessage(SUCCESS_MESSAGE, responseBody));
     }
 
@@ -141,6 +148,20 @@ public class AsyncHttpResponseHandler {
     // Pre-processing of messages (in original calling thread, typically the UI thread)
     //
 
+    protected void handleSuccessMessage(byte[] responseBody) {
+        // Call both callback, first with the raw bytes, then as string.
+        onSuccess(responseBody);
+
+        // TODO: use proper charset from content-type as second param to toString()
+        String responseAsString;
+        try {
+            responseAsString = new String(responseBody, "UTF-8");
+        } catch (UnsupportedEncodingException e) {
+            responseAsString = new String(responseBody);
+        }
+        handleSuccessMessage(responseAsString);
+    }
+
     protected void handleSuccessMessage(String responseBody) {
         onSuccess(responseBody);
     }
@@ -153,19 +174,19 @@ public class AsyncHttpResponseHandler {
 
     // Methods which emulate android's Handler and Message methods
     protected void handleMessage(Message msg) {
-        switch(msg.what) {
-            case SUCCESS_MESSAGE:
-                handleSuccessMessage((String)msg.obj);
-                break;
-            case FAILURE_MESSAGE:
-                handleFailureMessage((Throwable)msg.obj);
-                break;
-            case START_MESSAGE:
-                onStart();
-                break;
-            case FINISH_MESSAGE:
-                onFinish();
-                break;
+        switch (msg.what) {
+        case SUCCESS_MESSAGE:
+            handleSuccessMessage((byte[]) msg.obj);
+            break;
+        case FAILURE_MESSAGE:
+            handleFailureMessage((Throwable) msg.obj);
+            break;
+        case START_MESSAGE:
+            onStart();
+            break;
+        case FINISH_MESSAGE:
+            onFinish();
+            break;
         }
     }
 
@@ -203,7 +224,14 @@ public class AsyncHttpResponseHandler {
                     entity = new BufferedHttpEntity(temp);
                 }
 
-                sendSuccessMessage(EntityUtils.toString(entity));
+                // Send response as a byte array and assume listener knows what to expect.
+                ByteArrayInputStream stream = (ByteArrayInputStream) entity.getContent();
+                // Cast long to int. I assume we don't want to send
+                // 2GB+ of data between threads.
+                byte[] contents = new byte[(int) entity.getContentLength()];
+                while (stream.read(contents) != -1) {
+                }
+                sendSuccessMessage(contents);
             } catch(IOException e) {
                 sendFailureMessage(e);
             }
